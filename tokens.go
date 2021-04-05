@@ -16,17 +16,18 @@ type Tokens struct {
 	Tokens []string
 }
 
-type TokenTime struct {
+// HrMinSec stores a time of day
+type HrMinSec struct {
 	Hour    int
 	Minute  int
 	Seconds int
 }
 
-func (t TokenTime) Secs() int {
+func (t HrMinSec) Secs() int {
 	return (t.Hour*60+t.Minute)*60 + t.Seconds
 }
 
-func (t TokenTime) String() string {
+func (t HrMinSec) String() string {
 	return fmt.Sprintf("%02d:%02d", t.Hour, t.Minute)
 }
 
@@ -44,22 +45,7 @@ func (t TokenDoW) Includes(d time.Weekday) bool {
 func (t TokenDoW) String() string {
 	s := []string{}
 	for _, d := range t {
-		switch d {
-		case 0:
-			s = append(s, "Sunday")
-		case 1:
-			s = append(s, "Monday")
-		case 2:
-			s = append(s, "Tuesday")
-		case 3:
-			s = append(s, "Wednesday")
-		case 4:
-			s = append(s, "Thursday")
-		case 5:
-			s = append(s, "Friday")
-		case 6:
-			s = append(s, "Saturday")
-		}
+		s = append(s, d.String())
 	}
 	return strings.Join(s, ", ")
 }
@@ -83,11 +69,14 @@ func (t *Tokens) Next() (interface{}, []string, error) {
 	}()
 
 	switch v := tok.(type) {
-	case TokenDoW:
+	case TokenDoW: // Check for DOW range
 		if n1, err := t.TokenAt(t.Index + 1); err == nil {
 			if _, ok := n1.(TokenTo); ok {
+				// fmt.Print(" GOT TO ")
 				if a, err := t.TokenAt(t.Index + 2); err == nil {
+					// fmt.Printf(" GOT %T ", a)
 					if n2, ok := a.(TokenDoW); ok {
+						// fmt.Print(" GOT DOW ")
 						dFrom := time.Weekday(0) // Get last day from v
 						if len(v) > 0 {
 							dFrom = v[len(v)-1]
@@ -133,7 +122,7 @@ func (t *Tokens) TokenAt(index int) (interface{}, error) {
 
 	// Time
 	if m := regTime.FindStringSubmatch(str); m != nil {
-		item := TokenTime{}
+		item := HrMinSec{}
 		item.Hour, _ = strconv.Atoi(m[1])
 		item.Minute, _ = strconv.Atoi("0" + m[2])
 		if index < len(t.Tokens)-1 {

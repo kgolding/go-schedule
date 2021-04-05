@@ -27,79 +27,95 @@ func (s *Schedule) Next(now time.Time) (time.Time, bool) {
 
 	setIfEarlier := func(x time.Time, newState bool) {
 		// fmt.Println("- SetIfEarlier", x.String())
+		if x.Before(now) {
+			return // nextTime must never be before now
+		}
 		if nextTime.IsZero() || x.Before(nextTime) {
 			nextTime = x
 			state = newState
+			// fmt.Println(" == SetIfEarlier", x.String())
 		}
 	}
+
+	// Start checking the day before to allow for items that span midnight
+	t := now.Add(-time.Hour * 24)
 
 	for i := 0; i < 31; i++ { // Check the next 31 days to match a DoW or DoM
 		for _, item := range s.Items {
 			// Check DOW
 			// fmt.Println("Next:", now.String())
-			if len(item.DoW) == 0 || item.DoW.Includes(now.Weekday()) {
+			if len(item.DoW) == 0 || item.DoW.Includes(t.Weekday()) {
 				// fmt.Println(" - DOW OK", nextTime.Weekday().String(), int(nextTime.Weekday()))
-				hr, min, secs := now.Clock()
-				nowSecs := TokenTime{hr, min, secs}.Secs() + 1
+				hr, min, secs := t.Clock()
+				nowSecs := HrMinSec{hr, min, secs}.Secs() + 1
 
 				// fmt.Println(" - Check before start", nowSecs, item.Start.Secs())
+				tStart := time.Date(now.Year(), t.Month(), t.Day(), item.Start.Hour, item.Start.Minute, 0, 0, now.Location())
 				if nowSecs < item.Start.Secs() {
-					setIfEarlier(time.Date(now.Year(), now.Month(), now.Day(), item.Start.Hour, item.Start.Minute, 0, 0, now.Location()), true)
+					// fmt.Println(" - Start SetIfEarlier ", tStart.String(), true)
+					setIfEarlier(tStart, true)
 				}
-				switch v := item.End.(type) {
-				case TokenTime:
-					if nowSecs <= v.Secs() {
-						setIfEarlier(time.Date(now.Year(), now.Month(), now.Day(), v.Hour, v.Minute, 0, 0, now.Location()), false)
-					}
-				}
+				tEnd := tStart.Add(item.Duration)
+				// fmt.Println(" - End SetIfEarlier ", tEnd.String(), false)
+				setIfEarlier(tEnd, false)
+				// if nextTime.IsZero() || .Before(nextTime) {
+				// 	nextTime = x
+				// 	state = newState
+				// }
 			}
 		}
 		if nextTime.IsZero() {
-			now = time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, now.Location())
+			t = time.Date(t.Year(), t.Month(), t.Day()+1, 0, 0, 0, 0, now.Location())
 		} else {
 			break
 		}
 	}
 
+	// fmt.Printf("----- Next(%s) = %s, %t\n", now, nextTime, state)
 	return nextTime, state
 }
 
 // Checktime returns true if the given time is within the schedule
-func (s *Schedule) CheckTime(t time.Time) bool {
-	for _, item := range s.Items {
-		// Check DOW
-		// fmt.Println("Checktime:", t.String())
-		if len(item.DoW) == 0 || item.DoW.Includes(t.Weekday()) {
-			// fmt.Println("Checktime:", "DOW OK", t.Weekday().String(), int(t.Weekday()))
-			hr, min, secs := t.Clock()
-			tSecs := TokenTime{hr, min, secs}.Secs()
-			// Check is after start time
-			if tSecs >= item.Start.Secs() {
-				// fmt.Println(" - Checktime:", "Start OK")
-				switch v := item.End.(type) {
-				case TokenTime:
-					if tSecs <= v.Secs() {
-						// fmt.Println(" - Checktime:", "End OK")
-						return true
-						// } else {
-						// 	fmt.Println(" - Checktime:", "End FAILED")
-					}
-				}
-				// } else {
-				// 	fmt.Println(" - Checktime:", "Start FAILED")
+func (s *Schedule) CheckTime(now time.Time) bool {
+	_, state := s.Next(now)
+	return !state
+}
+
+func (s *Schedule) Compare(s2 *Schedule) error {
+	if len(s.Items) != len(s2.Items) {
+		return fmt.Errorf("different number of items: %d vs %d", len(s.Items), len(s2.Items))
+	}
+	for i, item := range s.Items {
+		item2 := s2.Items[i]
+		if item.Start.Hour != item2.Start.Hour ||
+			item.Start.Minute != item2.Start.Minute ||
+			item.Start.Seconds != item2.Start.Seconds {
+			return fmt.Errorf("item %d has different start times: %s != %s", i, item.Start.String(), item2.Start.String())
+		}
+
+		if len(item.DoW) != len(item2.DoW) {
+			return fmt.Errorf("different number of DoW: %d vs %d", len(item.DoW), len(item2.DoW))
+		}
+		for j, d := range item.DoW {
+			if d != item2.DoW[j] {
+				return fmt.Errorf("different DoW: %s vs %s", item.DoW.String(), item2.DoW.String())
 			}
 		}
+
+		if item.Duration != item2.Duration {
+			return fmt.Errorf("different duration: %s vs %s", item.Duration, item2.Duration)
+		}
 	}
-	return false
+	return nil
 }
 
 type Item struct {
-	Start TokenTime
+	Start HrMinSec
 	DoW   TokenDoW
 	// DoM    []int
 	// Month  []int
 	// Year   []int
-	End End
+	Duration time.Duration
 }
 
 func (item *Item) String() string {
@@ -111,10 +127,7 @@ func (item *Item) String() string {
 
 	ret = append(ret, "From "+item.Start.String())
 
-	switch v := item.End.(type) {
-	case TokenTime:
-		ret = append(ret, "until "+v.String())
-	}
+	ret = append(ret, "for "+item.Duration.String())
 
 	return strings.Join(ret, " ")
 }
@@ -137,8 +150,9 @@ const (
 
 func Parse(lines string) (*Schedule, error) {
 	s := New()
-	for _, line := range strings.Split(lines, "\n") {
+	for lineNum, line := range strings.Split(lines, "\n") {
 		tokens := getTokens(line)
+		// fmt.Printf("\nPARSE %d '%s' [%s]", lineNum, line, tokens.Tokens)
 		// fmt.Println("Line ", i+1, ":", tokens)
 
 		if len(tokens.Tokens) == 0 {
@@ -146,7 +160,7 @@ func Parse(lines string) (*Schedule, error) {
 		}
 
 		item := Item{
-			Start: TokenTime{0, 0, 0}, // Default start
+			Start: HrMinSec{0, 0, 0}, // Default start
 		}
 		stage := STAGE_FROM
 
@@ -158,13 +172,13 @@ func Parse(lines string) (*Schedule, error) {
 			if err != nil {
 				return nil, err
 			}
-			// fmt.Printf("Parsed token: %#v %s\n", tok, tok)
+			// fmt.Printf(" ++%T %s++ ", tok, strs)
 
 			switch stage {
 			case STAGE_FROM:
 				switch v := tok.(type) {
-				case TokenTime:
-					// fmt.Printf(" | TIME %s", v.String())
+				case HrMinSec:
+					// fmt.Printf(" | START TIME %s", v.String())
 					item.Start = v
 
 				case TokenDoW:
@@ -178,30 +192,44 @@ func Parse(lines string) (*Schedule, error) {
 				case TokenFor:
 					// fmt.Print(" | FOR")
 					stage = STAGE_FOR
+
+				default:
+					return nil, fmt.Errorf("line %d unknown token in from section '%s'", lineNum+1, strs)
 				}
 
 			case STAGE_TO:
 				switch v := tok.(type) {
-				case TokenTime:
-					// fmt.Printf(" | TIME %s", v.String())
-					end := TokenTime{
+				case HrMinSec:
+					end := HrMinSec{
 						Hour:   v.Hour,
 						Minute: v.Minute,
 					}
-					if end.Hour < 13 && end.Secs() < item.Start.Secs() {
-						fmt.Println(strs)
-						if !strings.Contains(strs[0], ":") || len(strs[0]) > 2 || (len(strs) > 1 && strs[1] == "pm") {
-							end.Hour += 12
+					item.Duration = time.Second * time.Duration(end.Secs()-item.Start.Secs())
+					// fmt.Printf(" | END TIME %s [%s] (%s)\n", v.String(), strs, item.Duration)
+					if item.Duration <= 0 {
+						hasPM := len(strs) > 1 && strs[1] == "pm"
+						if end.Hour < 12 && hasPM {
+							// fmt.Printf(" Negative duration - adding 12 hours")
+							item.Duration += time.Hour * 12
+						}
+						if item.Duration <= 0 {
+							// fmt.Printf(" Negative duration - adding 24 hours")
+							item.Duration += time.Hour * 24
 						}
 					}
-					item.End = end
+					// fmt.Printf(" | DURATION %s", item.Duration.String())
+
+				default:
+					return nil, fmt.Errorf("line %d unknown token in to section '%s'", lineNum+1, strs)
 
 				}
 			}
+			// fmt.Printf(" T[%T] ", tok)
 		}
 
-		if item.End == nil {
-			item.End = TokenTime{24, 0, 0}
+		if item.Duration == 0 { // If no duration then set to end of the day
+			end := HrMinSec{24, 0, 0}
+			item.Duration = time.Second * time.Duration(end.Secs()-item.Start.Secs())
 		}
 
 		s.Items = append(s.Items, item)

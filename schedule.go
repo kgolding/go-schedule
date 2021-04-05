@@ -27,10 +27,15 @@ func (s *Schedule) Next(now time.Time) (time.Time, bool) {
 
 	setIfEarlier := func(x time.Time, newState bool) {
 		// fmt.Println("- SetIfEarlier", x.String())
-		if x.Before(now) {
+		xAdj := x
+		if newState {
+			xAdj = x.Add(-time.Second)
+		}
+		// xAdj := x
+		if xAdj.Before(now.Add(time.Second)) {
 			return // nextTime must never be before now
 		}
-		if nextTime.IsZero() || x.Before(nextTime) {
+		if nextTime.IsZero() || xAdj.Before(nextTime) {
 			nextTime = x
 			state = newState
 			// fmt.Println(" == SetIfEarlier", x.String())
@@ -47,7 +52,7 @@ func (s *Schedule) Next(now time.Time) (time.Time, bool) {
 			if len(item.DoW) == 0 || item.DoW.Includes(t.Weekday()) {
 				// fmt.Println(" - DOW OK", nextTime.Weekday().String(), int(nextTime.Weekday()))
 				hr, min, secs := t.Clock()
-				nowSecs := HrMinSec{hr, min, secs}.Secs() + 1
+				nowSecs := HrMinSec{hr, min, secs, false}.Secs()
 
 				// fmt.Println(" - Check before start", nowSecs, item.Start.Secs())
 				tStart := time.Date(now.Year(), t.Month(), t.Day(), item.Start.Hour, item.Start.Minute, 0, 0, now.Location())
@@ -160,7 +165,7 @@ func Parse(lines string) (*Schedule, error) {
 		}
 
 		item := Item{
-			Start: HrMinSec{0, 0, 0}, // Default start
+			Start: HrMinSec{0, 0, 0, false}, // Default start
 		}
 		stage := STAGE_FROM
 
@@ -206,14 +211,19 @@ func Parse(lines string) (*Schedule, error) {
 					}
 					item.Duration = time.Second * time.Duration(end.Secs()-item.Start.Secs())
 					// fmt.Printf(" | END TIME %s [%s] (%s)\n", v.String(), strs, item.Duration)
+					if item.Duration < -time.Hour*12 {
+						// fmt.Printf(" Negative duration greater 12 hrs - adding 24 hours\n")
+						item.Duration += time.Hour * 24
+
+					}
 					if item.Duration <= 0 {
-						hasPM := len(strs) > 1 && strs[1] == "pm"
-						if end.Hour < 12 && hasPM {
-							// fmt.Printf(" Negative duration - adding 12 hours")
+						// hasPM := len(strs) > 1 && strs[1] == "pm"
+						if end.Hour < 12 && v.NoAMPM {
+							// fmt.Printf(" Negative duration - adding 12 hours\n")
 							item.Duration += time.Hour * 12
 						}
 						if item.Duration <= 0 {
-							// fmt.Printf(" Negative duration - adding 24 hours")
+							// fmt.Printf(" Negative duration - adding 24 hours\n")
 							item.Duration += time.Hour * 24
 						}
 					}
@@ -228,11 +238,12 @@ func Parse(lines string) (*Schedule, error) {
 		}
 
 		if item.Duration == 0 { // If no duration then set to end of the day
-			end := HrMinSec{24, 0, 0}
+			end := HrMinSec{24, 0, 0, false}
 			item.Duration = time.Second * time.Duration(end.Secs()-item.Start.Secs())
 		}
 
 		s.Items = append(s.Items, item)
 	}
+	// fmt.Println()
 	return s, nil
 }

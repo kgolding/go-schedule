@@ -21,6 +21,7 @@ type HrMinSec struct {
 	Hour    int
 	Minute  int
 	Seconds int
+	NoAMPM  bool
 }
 
 func (t HrMinSec) Secs() int {
@@ -28,7 +29,11 @@ func (t HrMinSec) Secs() int {
 }
 
 func (t HrMinSec) String() string {
-	return fmt.Sprintf("%02d:%02d", t.Hour, t.Minute)
+	extra := " was 12hr"
+	if t.NoAMPM {
+		extra = ""
+	}
+	return fmt.Sprintf("%02d:%02d%s", t.Hour, t.Minute, extra)
 }
 
 type TokenDoW []time.Weekday
@@ -54,7 +59,9 @@ type TokenTo string
 type TokenFor string
 type TokenUntil string
 
-var regTime = regexp.MustCompile(`^(\d{1,2}):{0,1}(\d{2}){0,1}$`)
+// https://regex101.com/r/R1TKiG/1
+var regTime = regexp.MustCompile(`^([0-1]{0,1}\d|2[0-3])(?:\:{0,1}([0-5]\d)){0,1}$`)
+
 var dows = []string{"sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"}
 
 func (t *Tokens) Next() (interface{}, []string, error) {
@@ -122,7 +129,9 @@ func (t *Tokens) TokenAt(index int) (interface{}, error) {
 
 	// Time
 	if m := regTime.FindStringSubmatch(str); m != nil {
-		item := HrMinSec{}
+		item := HrMinSec{
+			NoAMPM: true,
+		}
 		item.Hour, _ = strconv.Atoi(m[1])
 		item.Minute, _ = strconv.Atoi("0" + m[2])
 		if index < len(t.Tokens)-1 {
@@ -132,12 +141,14 @@ func (t *Tokens) TokenAt(index int) (interface{}, error) {
 					return nil, errors.New("24 hour clock given can not have AM")
 				}
 				t.Index++ // Skip token
+				item.NoAMPM = false
 			case "pm":
 				if item.Hour > 12 {
 					return nil, errors.New("24 hour clock given can not have AM")
 				}
 				t.Index++ // Skip token
 				item.Hour += 12
+				item.NoAMPM = false
 			}
 		}
 		return item, nil

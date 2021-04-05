@@ -40,7 +40,7 @@ func (s *Schedule) Next(now time.Time) (time.Time, bool) {
 			if len(item.DoW) == 0 || item.DoW.Includes(now.Weekday()) {
 				// fmt.Println(" - DOW OK", nextTime.Weekday().String(), int(nextTime.Weekday()))
 				hr, min, secs := now.Clock()
-				nowSecs := TokenTime{hr, min, secs}.Secs()
+				nowSecs := TokenTime{hr, min, secs}.Secs() + 1
 
 				// fmt.Println(" - Check before start", nowSecs, item.Start.Secs())
 				if nowSecs < item.Start.Secs() {

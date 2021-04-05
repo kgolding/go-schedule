@@ -9,7 +9,7 @@ import (
 
 func main() {
 	s, err := schedule.Parse(`
-		0:30 to 0:35
+		0:48 to 0:50
 		1 to 2
 		3 to 4
 		5 to 6
@@ -21,15 +21,16 @@ func main() {
 	}
 	log.Printf("Schedule: %s\n", s.String())
 
-	CurrentState := s.CheckTime(time.Now())
 	for {
-		log.Println("State is ", CurrentState)
+		log.Println("State is ", s.CheckTime(time.Now()))
+
 		nextChange, state := s.Next(time.Now())
 		dur := time.Until(nextChange)
-		log.Printf("Waiting until %s (%s)", nextChange.String(), dur.String())
+
+		log.Printf("Next change is at %s which is in %s)", nextChange.String(), dur.String())
 		select {
 		case <-time.After(dur):
-			log.Println("Schedule transitioned to", state)
+			log.Println(" +++ Schedule transitioned to", state)
 		}
 	}
 }
